@@ -22,7 +22,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
 #################
-#Brave search
+# Brave search
 
 # Add these imports at the top of app_main.py
 from dotenv import load_dotenv
@@ -39,7 +39,6 @@ if 'BRAVE_KEY' in os.environ:
     print(f"[ENV] BRAVE_KEY value: {key[:4]}...{key[-4:] if len(key) > 8 else ''}")
 else:
     print("[ENV] WARNING: BRAVE_KEY not found in environment. Edit .env file with your Brave key")
-
 
 ##
 # SCIENTIFIC/NUMERICAL IMPORTS
@@ -271,7 +270,6 @@ def purge_temp_files(folder="out"):
 
     except Exception as e:
         print(f"[startup] cleanup error: {e}")
-
 
         ###################
 
@@ -1033,12 +1031,11 @@ class App:
         self._duck_gain = 1.0
         self._duck_active = False
 
-# This bit for recording dictation and no VAD
+        # This bit for recording dictation and no VAD
         self._dictation_recording = False
         self._dictation_buffer = []
         self._space_held = False
         self._dictation_mode_active = False
-
 
         # Replace complex vision state with:
         self._last_image_path = None
@@ -1319,18 +1316,15 @@ class App:
         )
         self.plot_btn.grid(row=5, column=4, padx=6, pady=6, sticky="w")
 
-
         # Prevent spacebar from triggering the button
         self.dictation_btn.unbind_class("TButton", "<space>")
 
-       # self.master.bind("<KeyPress-space>", self._on_space_press)
-       # self.master.bind("<KeyRelease-space>", self._on_space_release)
+        # self.master.bind("<KeyPress-space>", self._on_space_press)
+        # self.master.bind("<KeyRelease-space>", self._on_space_release)
         self.master.bind_all("<KeyPress-space>", self._on_space_press)
         self.master.bind_all("<KeyRelease-space>", self._on_space_release)
 
         # End Dictation controls
-
-
 
         # Echo controls
         ttk.Checkbutton(
@@ -1872,9 +1866,9 @@ class App:
         ❌ Repeat the expression when asked to plot
         ❌ Explain plotting compatibility (system handles it)
         ❌ Warn about variable conversion (automatic)
-        
+
         === CODE GENERATION STANDARDS ===
-        
+
         CRITICAL CODE RULES:
         1. When asked to write code, output ONLY Python code inside ```python blocks
         2. NEVER include example output lines like "The result is: 3.14" inside code blocks
@@ -2791,7 +2785,6 @@ class App:
                 # sleep_mode removed here - so sleep doesn't pause VAD!
             )
 
-
         it = listener.listen(echo_guard=echo_guard, pause_check=pause_check)
         self._mode_last = self.duplex_mode.get()
         self.logln(f"[mode] start as {self._mode_last}")
@@ -2925,7 +2918,6 @@ class App:
                     continue
                 else:
                     self._barge_latched = False
-
 
             # === SIMPLIFIED VISION LOGIC ===
             # Unified AI handles everything
@@ -3125,7 +3117,6 @@ class App:
             ]
         )
 
-
         if not filepath:
             return
 
@@ -3252,7 +3243,6 @@ class App:
         except Exception as e:
             self.logln(f"[audio-file] Load error: {e}")
             return None, None
-
 
     def _resample_audio(self, data, orig_sr, target_sr):
         """Resample audio to target sample rate"""
@@ -3600,12 +3590,12 @@ class App:
             # Restore focus for dictation mode
             if self.dictation_mode_var.get():
                 self.master.after(100, self.master.focus_force)
+
     # Begin route command
     # Replace the entire _route_command method with:
     def _route_command(self, raw_text: str) -> bool:
         """Delegate command routing to external class"""
         self.logln(f"[route-debug] Routing text: '{raw_text}'")
-
 
         result = self.command_router.route_command(raw_text)
         self.logln(f"[route-debug] Command router returned: {result}")
@@ -3861,7 +3851,6 @@ class App:
             self.code_window.show()
             return True
         return False
-
 
     def stop_speaking(self):
         try:
@@ -4499,7 +4488,6 @@ class App:
             self.logln(f"[plot] Error: {e}")
             self.play_chime(freq=440, ms=200, vol=0.1)
 
-
     def toggle_search_window(self, ensure_visible=False):
         """Toggle web search window - FIXED VERSION
         Args:
@@ -4845,7 +4833,6 @@ class App:
                 self.set_light("listening")
                 self.logln("[dictation] ✅ VAD mic loop should resume")
 
-
     def _on_space_press(self, event=None):
         if not self.dictation_mode_var.get():
             return
@@ -4866,7 +4853,6 @@ class App:
 
         return "break"
 
-
         if self._space_held:
             return
 
@@ -4886,8 +4872,6 @@ class App:
             self._stop_dictation_recording()
 
         return "break"
-
-
 
     def _toggle_dictation_recording(self):
         if self._dictation_recording:
@@ -4913,8 +4897,6 @@ class App:
         self.logln("[dictation] 🔴 Recording started - VAD BLOCKED")
 
         self.play_chime(freq=880, ms=100, vol=0.15)
-
-
 
         def record_continuous():
             import sounddevice as sd
@@ -5048,7 +5030,6 @@ class App:
             self.speaking_flag = False
             self.master.focus_force()
             self.logln("[dictation] ✅ Back to VAD mode")
-
 
     def _show_dictation_result(self, text):
         self.text_box.delete("1.0", "end")
@@ -5373,7 +5354,6 @@ ADDITIONAL CONTEXT:
                 else:
                     self.logln(f"[personality] 🗣️ No voice specified, keeping current")
 
-
             # Speech rate
             speech_rate = voice_settings.get('speech_rate')
             if speech_rate is not None:
@@ -5401,7 +5381,6 @@ ADDITIONAL CONTEXT:
                 if hasattr(self.qwen, 'temperature'):
                     self.qwen.temperature = default_temp
                     self.logln(f"[personality] 🌡️ Temperature: {default_temp} (default)")
-
 
             # === SYSTEM PROMPT - AGGRESSIVE PERSONALITY RESET ===
             system_prompt = personality.get('system_prompt')
@@ -5515,10 +5494,6 @@ Do NOT reference or blend with any previous personalities.
 
         return "\n\n".join(clean_blocks).strip()
 
-
-
-
-
     def store_extracted_code(self, code: str):
         """Store extracted code and update UI"""
         if code and len(code) > 10:  # Only store substantial code
@@ -5532,8 +5507,6 @@ Do NOT reference or blend with any previous personalities.
             self.play_chime(freq=880, ms=100, vol=0.1)
             return True
         return False
-
-
 
     def _clear_chat_context_for_personality_switch(self):
         """Clear all chat context when switching personalities."""
@@ -5738,7 +5711,6 @@ Do NOT reference or blend with any previous personalities.
 
     Respond naturally and helpfully while following these guidelines.
     """
-
 
         # Reset temperature to config default
         default_temp = self.cfg.get("qwen_temperature", 0.7)
