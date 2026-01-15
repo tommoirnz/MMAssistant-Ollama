@@ -978,6 +978,9 @@ class App:
         self.latex_append_mode = tk.BooleanVar(value=False)
         self.speak_math_var = tk.BooleanVar(value=True)
         self.avatar_kind = tk.StringVar(value="Rings")
+#Auto code enabler
+        self.auto_run_var = tk.BooleanVar(value=False)  # Default OFF
+        self.logln("[code] Auto-run code: OFF (default)")
 
         self._last_search_query = ""
         self.search_win = None
@@ -1638,6 +1641,15 @@ class App:
         )
         self.code_btn.grid(row=5, column=5, padx=6)  # Adjust column as needed
 
+        # ADD THE CHECKBOX RIGHT AFTER IT to enable self-correcting coding
+        self.auto_run_check = ttk.Checkbutton(
+            top,
+            text="▶ Auto-run",
+            variable=self.auto_run_var,
+            command=self._on_auto_run_toggle
+        )
+        self.auto_run_check.grid(row=5, column=6, padx=6, sticky="w")
+
         # === TEMPORARY DEBUG - ADD THIS AT THE VERY END ===
         def check_values():
             print(f"[DEBUG] Mic combo values: {self.dev_combo['values']}")
@@ -2106,6 +2118,10 @@ class App:
 
             self.logln(f"[model] {reply[:200]}...")
             self.preview_latex(reply, context="text")
+
+            # Auto-extract and run code if enabled
+            if self.auto_run_var.get():
+                self._extract_and_auto_run_from_ai(reply)
 
             # === AUTO-EXTRACT CODE FROM REPLY ===
             extracted_code = self.extract_python_code(reply)
@@ -2956,6 +2972,11 @@ class App:
 
             clean = clean_for_tts(reply, speak_math=self.speak_math_var.get())
             self.speaking_flag = True
+
+            # Auto-extract and run code for voice queries
+            if self.auto_run_var.get():
+                self._extract_and_auto_run_from_ai(reply)
+
             self.interrupt_flag = False
             self.set_light("speaking")
 
@@ -3813,11 +3834,21 @@ class App:
                 output_callback=self._receive_code_output
             )
 
+        # Show the window FIRST
+        self.code_window.show()
+        self.code_window.focus_set()
+
         # Try to load extracted code
         if hasattr(self, '_last_extracted_code') and self._last_extracted_code:
             self.code_window.set_code(self._last_extracted_code)
             self.logln("[code] Auto-loaded extracted code into sandbox")
             self._last_extracted_code = None
+
+            # === AUTO-RUN if checkbox is checked ===
+            if self.auto_run_var.get():
+                # Give window time to fully initialize
+                self.master.after(500, self.code_window._run_code_safe)
+                self.logln("[code] ✅ Auto-running loaded code")
         else:
             self.code_window.set_code(
                 "# No code extracted yet.\n# Ask AI to generate code, or paste your own code here.")
@@ -3825,10 +3856,19 @@ class App:
 
         # Reset button appearance
         self.code_btn.config(text="💻 Run Code", style='TButton')
-
-        # Show the window
-        self.code_window.show()
         self.logln("[code] Code window opened")
+
+
+    def _on_auto_run_toggle(self):
+        """Callback when auto-run checkbox is toggled"""
+        state = "ON" if self.auto_run_var.get() else "OFF"
+        self.logln(f"[code] Auto-run code: {state}")
+
+        # Update checkbox text
+        if self.auto_run_var.get():
+            self.auto_run_check.config(text="▶ Auto-run ✓")
+        else:
+            self.auto_run_check.config(text="▶ Auto-run")
 
 
     def _extract_code_to_window(self):
@@ -4162,6 +4202,25 @@ class App:
 
         except Exception as e:
             self.logln(f"[code] Error receiving output: {e}")
+
+    def _extract_and_auto_run_from_ai(self, ai_response: str):
+        """Extract code from AI response and auto-run if enabled"""
+        if not self.auto_run_var.get():
+            return False
+
+        code = self.extract_python_code(ai_response)
+        if code:
+            self.store_extracted_code(code)
+
+            # Check if we should auto-open the window
+            if self.auto_run_var.get():
+                # Auto-open the code window
+                self._show_code_window()  # This will trigger auto-run
+                self.logln("[code] ✅ Auto-opened and running code from AI response")
+                return True
+
+        return False
+
 
     def _toggle_image_window(self):
         try:
@@ -5481,7 +5540,7 @@ Do NOT reference or blend with any previous personalities.
             self.personality_status.config(text="❌ Error", foreground="red")
 
     def extract_python_code(self, text: str):
-        """Extract Python code - REMOVE OUTPUT LINES"""
+        """Extract Python code - Filter out output text and pip install"""
         import re
 
         pattern = r'```(?:python)?\s*(.*?)\s*```'
@@ -5498,16 +5557,38 @@ Do NOT reference or blend with any previous personalities.
             for line in lines:
                 stripped = line.strip()
 
+                # === FILTER OUT OUTPUT/RESULT TEXT ===
+                # Lines that start with text (not code) followed by colon and number
+                if (re.match(r'^[a-zA-Z].*decimal places:', stripped) or  # "to 100 decimal places:"
+                        re.match(r'^[a-zA-Z].*places:', stripped) or  # "π to 100 places:"
+                        re.match(r'^[a-zA-Z].*result:', stripped) or  # "The result is:"
+                        re.match(r'^[a-zA-Z].*output:', stripped) or  # "The output:"
+                        'π to' in stripped or  # "π to 100 decimal places"
+                        'Pi to' in stripped):  # "Pi to 100 decimal places"
+                    continue  # Skip output text
+
+                # === CRITICAL: REMOVE pip install commands ===
+                if (stripped.startswith('pip install') or
+                        stripped.startswith('pip3 install') or
+                        stripped.startswith('!pip install') or
+                        stripped.startswith('conda install') or
+                        'pip install mpmath' in stripped):
+                    continue
+
+                # Also remove comments about pip installation
+                if stripped.startswith('#') and 'pip install' in stripped.lower():
+                    continue
+
                 # KEEP: Valid Python code
-                if (not stripped or  # Empty line
-                        stripped.startswith('#') or  # Comment
+                if (not stripped or
+                        stripped.startswith('#') or
                         stripped.startswith('def ') or
                         stripped.startswith('class ') or
                         stripped.startswith('import ') or
                         stripped.startswith('from ') or
-                        '=' in line or  # Assignment
-                        '(' in stripped or  # Function call
-                        stripped.endswith(':') or  # Code block
+                        '=' in line or
+                        '(' in stripped or
+                        stripped.endswith(':') or
                         stripped.startswith('return ') or
                         stripped.startswith('print(') or
                         stripped.startswith('for ') or
@@ -5516,19 +5597,18 @@ Do NOT reference or blend with any previous personalities.
                         stripped.startswith('try:') or
                         stripped.startswith('except ') or
                         stripped.startswith('raise ') or
-                        re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*\s*[:=\(]', stripped)):  # Variable/function
-
+                        re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*\s*[:=\(]', stripped)):
                     python_lines.append(line)
 
-                # REMOVE: Output lines (look like English sentences with results)
-                elif (re.match(r'^[A-Z][a-z].*: [-+]?[\d\.]+', stripped) or  # "The result is: 3.14"
-                      re.match(r'^[A-Z][a-z].* is [-+]?[\d\.]+', stripped) or  # "The answer is 42"
-                      'approximate square root' in stripped or  # Your specific case
+                # REMOVE: Output lines with results
+                elif (re.match(r'^[A-Z][a-z].*: [-+]?[\d\.]+', stripped) or
+                      re.match(r'^[A-Z][a-z].* is [-+]?[\d\.]+', stripped) or
+                      'approximate square root' in stripped or
                       'Error check:' in stripped or
                       'The output will be:' in stripped):
-                    continue  # Skip this line
+                    continue
 
-                # REMOVE: Standalone numbers (output results)
+                # REMOVE: Standalone numbers (results)
                 elif re.match(r'^[-+]?[\d\.]+(?:e[-+]?\d+)?$', stripped):
                     continue
 
