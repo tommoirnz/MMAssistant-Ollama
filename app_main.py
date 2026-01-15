@@ -62,6 +62,8 @@ try:
 except ImportError:
     EDGE_TTS_AVAILABLE = False
     print("[tts] ⚠️ edge-tts not installed - run: pip install edge-tts")
+# SandBox
+from code_window import CodeWindow
 
 # AUDIO/IMAGE IMPORTS
 import sounddevice as sd
@@ -1624,6 +1626,18 @@ class App:
         if self.latex_auto.get():
             self.latex_win_text.show()
 
+        # SandBox Button
+        self.code_window = None  # Will be created on demand
+
+        # Add a "Run Code" button to UI,
+        self.code_btn = ttk.Button(
+            top,  # Your top frame
+            text="💻 Run Code",
+            command=self._show_code_window,
+            width=12
+        )
+        self.code_btn.grid(row=5, column=5, padx=6)  # Adjust column as needed
+
         # === TEMPORARY DEBUG - ADD THIS AT THE VERY END ===
         def check_values():
             print(f"[DEBUG] Mic combo values: {self.dev_combo['values']}")
@@ -1858,6 +1872,16 @@ class App:
         ❌ Repeat the expression when asked to plot
         ❌ Explain plotting compatibility (system handles it)
         ❌ Warn about variable conversion (automatic)
+        
+        === CODE GENERATION STANDARDS ===
+        
+        CRITICAL CODE RULES:
+        1. When asked to write code, output ONLY Python code inside ```python blocks
+        2. NEVER include example output lines like "The result is: 3.14" inside code blocks
+        3. NEVER include descriptive text or comments about output inside code blocks
+        4. Make code COMPLETE and DIRECTLY RUNNABLE
+        5. Include necessary import statements (math, random, statistics, etc.)
+        6. Include example usage as ACTUAL CODE (print statements), not comments
 
         === SUMMARY OF KEY BEHAVIORS ===
 
@@ -2058,14 +2082,14 @@ class App:
     def handle_text_query(self, text):
         self.logln(f"[user] {text}")
 
-        # Store the last text query for refresh capability
+        # Store the last text query
         self._last_text_query = text
 
         # Command routing first
         if self._route_command(text):
             return
 
-        # Process with single model - NO VISION LOGIC
+        # Process with single model
         try:
             if hasattr(self.qwen, 'generate_with_search'):
                 reply = self.qwen.generate_with_search(text)
@@ -2076,7 +2100,12 @@ class App:
             self.logln(f"[model] {reply[:200]}...")
             self.preview_latex(reply, context="text")
 
-            # TTS and playback
+            # === AUTO-EXTRACT CODE FROM REPLY ===
+            extracted_code = self.extract_python_code(reply)
+            if extracted_code:
+                self.store_extracted_code(extracted_code)
+
+            # Rest of your TTS code...
             clean = clean_for_tts(reply, speak_math=self.speak_math_var.get())
 
             with self._play_lock:
@@ -3767,6 +3796,72 @@ class App:
                     raise e
 
     # === UI Helper Methods ===
+    def _show_code_window(self):
+        """Show code window with auto-loaded code if available"""
+        # Create window if needed
+        if self.code_window is None or not self.code_window.winfo_exists():
+            self.code_window = CodeWindow(self.master, log_callback=self.logln)
+
+        # Try to load extracted code
+        if hasattr(self, '_last_extracted_code') and self._last_extracted_code:
+            self.code_window.set_code(self._last_extracted_code)
+            self.logln("[code] Auto-loaded extracted code into sandbox")
+            # Clear the stored code so button resets
+            self._last_extracted_code = None
+        else:
+            # No code extracted yet
+            self.code_window.set_code(
+                "# No code extracted yet.\n# Ask AI to generate code, or paste your own code here.")
+            self.logln("[code] No code to auto-load")
+
+        # Reset button appearance
+        self.code_btn.config(text="💻 Run Code", style='TButton')
+
+        # Show the window
+        self.code_window.show()
+        self.logln("[code] Code window opened")
+
+    def _extract_code_to_window(self):
+        """Extract code from current response and put in code window"""
+        if not self.code_window:
+            return
+
+        # Get the last AI response
+        try:
+            # Try to get from LaTeX window
+            if hasattr(self, 'latex_win') and self.latex_win:
+                content = self.latex_win.get_text_content()
+                if content:
+                    # Find Python code blocks
+                    import re
+                    code_blocks = re.findall(r'```python\s*(.*?)\s*```', content, re.DOTALL)
+                    if code_blocks:
+                        self.code_window.set_code(code_blocks[-1])
+                        self.logln("[code] Extracted code from response")
+                        return
+
+            # Try to get from log
+            if hasattr(self, 'log'):
+                log_content = self.log.get("1.0", "end-1c")
+                # Look for recent code in log
+                # (You can implement this based on your needs)
+
+        except Exception as e:
+            self.logln(f"[code] Error extracting code: {e}")
+
+    def extract_code_from_text(self, text: str):
+        """Public method to extract code from any text and show in code window"""
+        if not self.code_window:
+            self.code_window = CodeWindow(self.master, log_callback=self.logln)
+
+        import re
+        code_blocks = re.findall(r'```python\s*(.*?)\s*```', text, re.DOTALL)
+        if code_blocks:
+            self.code_window.set_code(code_blocks[-1], auto_run=False)
+            self.code_window.show()
+            return True
+        return False
+
 
     def stop_speaking(self):
         try:
@@ -5355,6 +5450,89 @@ Do NOT reference or blend with any previous personalities.
             import traceback
             self.logln(f"[personality] {traceback.format_exc()}")
             self.personality_status.config(text="❌ Error", foreground="red")
+
+    def extract_python_code(self, text: str):
+        """Extract Python code - REMOVE OUTPUT LINES"""
+        import re
+
+        pattern = r'```(?:python)?\s*(.*?)\s*```'
+        matches = re.findall(pattern, text, re.DOTALL)
+
+        if not matches:
+            return None
+
+        clean_blocks = []
+        for block in matches:
+            lines = block.split('\n')
+            python_lines = []
+
+            for line in lines:
+                stripped = line.strip()
+
+                # KEEP: Valid Python code
+                if (not stripped or  # Empty line
+                        stripped.startswith('#') or  # Comment
+                        stripped.startswith('def ') or
+                        stripped.startswith('class ') or
+                        stripped.startswith('import ') or
+                        stripped.startswith('from ') or
+                        '=' in line or  # Assignment
+                        '(' in stripped or  # Function call
+                        stripped.endswith(':') or  # Code block
+                        stripped.startswith('return ') or
+                        stripped.startswith('print(') or
+                        stripped.startswith('for ') or
+                        stripped.startswith('if ') or
+                        stripped.startswith('while ') or
+                        stripped.startswith('try:') or
+                        stripped.startswith('except ') or
+                        stripped.startswith('raise ') or
+                        re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*\s*[:=\(]', stripped)):  # Variable/function
+
+                    python_lines.append(line)
+
+                # REMOVE: Output lines (look like English sentences with results)
+                elif (re.match(r'^[A-Z][a-z].*: [-+]?[\d\.]+', stripped) or  # "The result is: 3.14"
+                      re.match(r'^[A-Z][a-z].* is [-+]?[\d\.]+', stripped) or  # "The answer is 42"
+                      'approximate square root' in stripped or  # Your specific case
+                      'Error check:' in stripped or
+                      'The output will be:' in stripped):
+                    continue  # Skip this line
+
+                # REMOVE: Standalone numbers (output results)
+                elif re.match(r'^[-+]?[\d\.]+(?:e[-+]?\d+)?$', stripped):
+                    continue
+
+                # Default: Keep the line
+                else:
+                    python_lines.append(line)
+
+            if python_lines:
+                clean_blocks.append('\n'.join(python_lines))
+
+        if not clean_blocks:
+            return None
+
+        return "\n\n".join(clean_blocks).strip()
+
+
+
+
+
+    def store_extracted_code(self, code: str):
+        """Store extracted code and update UI"""
+        if code and len(code) > 10:  # Only store substantial code
+            self._last_extracted_code = code
+            self.logln(f"[code] Stored {len(code)} chars of Python code")
+
+            # Update the Run Code button to show we have code
+            self.code_btn.config(text="💻 Run Code ✓", style='Success.TButton')
+
+            # Optional: Play a subtle notification sound
+            self.play_chime(freq=880, ms=100, vol=0.1)
+            return True
+        return False
+
 
 
     def _clear_chat_context_for_personality_switch(self):
