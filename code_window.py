@@ -11,7 +11,7 @@ import re
 class CodeWindow(tk.Toplevel):
     """Popup window for code execution with run button"""
 
-    def __init__(self, master, log_callback=None):
+    def __init__(self, master, log_callback=None, output_callback=None):
         super().__init__(master)
         self.title("Code Sandbox")
         self.geometry("850x650")
@@ -20,8 +20,14 @@ class CodeWindow(tk.Toplevel):
         # Logging callback to main app
         self.log_callback = log_callback or print
 
+        # Output callback to send results to main app's text box
+        self.output_callback = output_callback
+
         # Configure window
         self.configure(bg="#2b2b2b")
+
+        # Auto-send option (default ON)
+        self.auto_send_var = tk.BooleanVar(value=True)
 
         # Create UI
         self._create_ui()
@@ -31,6 +37,10 @@ class CodeWindow(tk.Toplevel):
 
         # Track last saved plot path
         self.last_plot_path = None
+
+        # Track last output for manual sending
+        self._last_output = ""
+        self._last_had_error = False
 
         # Hide by default
         self.withdraw()
@@ -99,6 +109,25 @@ class CodeWindow(tk.Toplevel):
             textvariable=self.status_var,
             foreground="#50c878"
         ).pack(side=tk.LEFT, padx=(20, 0))
+
+        # Separator before AI options
+        ttk.Separator(toolbar, orient="vertical").pack(side=tk.LEFT, fill="y", padx=10)
+
+        # Auto-send to AI checkbox
+        self.auto_send_cb = ttk.Checkbutton(
+            toolbar,
+            text="Auto-send output to AI",
+            variable=self.auto_send_var
+        )
+        self.auto_send_cb.pack(side=tk.LEFT, padx=(0, 6))
+
+        # Manual send to AI button
+        ttk.Button(
+            toolbar,
+            text="Send to AI",
+            command=self._send_output_to_ai,
+            width=10
+        ).pack(side=tk.LEFT, padx=(0, 10))
 
         # Close button (right side)
         ttk.Button(
@@ -377,20 +406,29 @@ plt.show = _patched_show
         self.status_var.set(message)
 
     def _show_execution_results(self, result, plot_path=None):
-        """Display execution results"""
+        """Display execution results and optionally send to AI"""
         output = ""
+        has_meaningful_output = False
 
         if result.stdout:
-            stdout_clean = result.stdout.encode('ascii', 'ignore').decode('ascii')
-            output += "=== STDOUT ===\n"
-            output += stdout_clean
-            if not stdout_clean.endswith('\n'):
-                output += '\n'
+            stdout_clean = result.stdout.encode('ascii', 'ignore').decode('ascii').strip()
+            if stdout_clean:
+                output += "=== STDOUT ===\n"
+                output += stdout_clean
+                if not stdout_clean.endswith('\n'):
+                    output += '\n'
+                has_meaningful_output = True
 
         if result.stderr:
-            stderr_clean = result.stderr.encode('ascii', 'ignore').decode('ascii')
-            output += "\n=== STDERR ===\n"
-            output += stderr_clean
+            stderr_clean = result.stderr.encode('ascii', 'ignore').decode('ascii').strip()
+            if stderr_clean:
+                output += "\n=== STDERR ===\n"
+                output += stderr_clean
+                has_meaningful_output = True
+
+        # Store last output for manual sending
+        self._last_output = output.strip() if has_meaningful_output else ""
+        self._last_had_error = (result.returncode != 0)
 
         if result.returncode != 0:
             self._show_output(output, is_error=True)
@@ -407,6 +445,38 @@ plt.show = _patched_show
             self.status_var.set("Success - Plot saved!")
         else:
             self.last_plot_path = None
+
+        # Auto-send to AI if enabled and there's meaningful output
+        if has_meaningful_output and self.auto_send_var.get():
+            self._send_output_to_ai()
+
+    def _send_output_to_ai(self):
+        """Send the last output to the main app's text box and optionally auto-send"""
+        if not hasattr(self, '_last_output') or not self._last_output:
+            self.status_var.set("No output to send")
+            self.log("[sandbox] No output to send to AI")
+            return
+
+        if not self.output_callback:
+            self.status_var.set("No AI connection")
+            self.log("[sandbox] No output callback configured")
+            return
+
+        try:
+            # Format the message for the AI
+            if self._last_had_error:
+                message = f"My code produced an error. Please help me fix it:\n\n{self._last_output}"
+            else:
+                message = f"Here is the output from my code:\n\n{self._last_output}"
+
+            # Send to main app
+            self.output_callback(message, auto_send=self.auto_send_var.get())
+            self.status_var.set("Sent to AI")
+            self.log(f"[sandbox] Output sent to AI ({len(self._last_output)} chars)")
+
+        except Exception as e:
+            self.status_var.set("Send failed")
+            self.log(f"[sandbox] Failed to send to AI: {e}")
 
     def _save_plot(self):
         """Save the last generated plot to a user-chosen location"""
