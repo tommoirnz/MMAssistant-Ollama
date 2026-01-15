@@ -201,8 +201,10 @@ class CodeWindow(tk.Toplevel):
 
     def _run_code_safe(self):
         """Execute code safely with restrictions"""
+        self.log("[sandbox] ⚡ AUTO-RUN STARTING")
         # Get current code
         code = self.code_text.get("1.0", tk.END).strip()
+        self.log(f"[sandbox] Code length: {len(code)} chars")
         if not code:
             self._show_output("No code to execute.", is_error=True)
             return
