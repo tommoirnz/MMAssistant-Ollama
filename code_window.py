@@ -467,7 +467,7 @@ plt.show = _patched_show
         try:
             # Format the message for the AI
             if self._last_had_error:
-                message = f"My code produced an error. Please help me fix it:\n\n{self._last_output}"
+                message = f" The code produced errors. Fix them and relist ENTIRE code, not partial:\n\n{self._last_output}"
             else:
                 message = f"Here is the output from my code:\n\n{self._last_output}"
 
