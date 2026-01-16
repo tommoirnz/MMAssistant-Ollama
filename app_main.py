@@ -1902,6 +1902,13 @@ class App:
         5. Include necessary import statements (math, random, statistics, etc.)
         6. Include example usage as ACTUAL CODE (print statements), not comments
 
+        CRITICAL RULES FOR CODE WRITING:
+        1. **ALWAYS PROVIDE COMPLETE, SELF-CONTAINED CODE**
+        2. **NEVER output partial code snippets** meant to be added to existing code
+        3. **INCLUDE ALL NECESSARY VARIABLES** in the same code block
+        4. **CODE MUST RUN INDEPENDENTLY** without  dependencies on previous context
+
+
         === SUMMARY OF KEY BEHAVIORS ===
 
         1. **Mathematics**: Always provide clean LaTeX expressions
@@ -2117,19 +2124,52 @@ class App:
             reply = clean_model_output(reply)
 
             self.logln(f"[model] {reply[:200]}...")
-            self.preview_latex(reply, context="text")
 
-            # Auto-extract and run code if enabled
-            if self.auto_run_var.get():
-                self._extract_and_auto_run_from_ai(reply)
+            # === DEBUG: LOG FULL REPLY FOR INSPECTION ===
+            self.logln(f"[code] DEBUG: ========== FULL REPLY (first 1000 chars) ==========")
+            self.logln(f"[code] DEBUG: {reply[:1000]}")
+            self.logln(f"[code] DEBUG: ===================================================")
 
-            # === AUTO-EXTRACT CODE FROM REPLY ===
+            # === ALWAYS EXTRACT CODE FROM REPLY (EVEN WHEN AUTO-RUN IS OFF) ===
+            self.logln(f"[code] DEBUG: Starting code extraction from {len(reply)} chars")
+
             extracted_code = self.extract_python_code(reply)
+
             if extracted_code:
-                self.store_extracted_code(extracted_code)
+                self.logln(f"[code] ✅ SUCCESS: Extracted {len(extracted_code)} chars of Python code")
+                self.logln(f"[code] DEBUG: First 200 chars of extracted code: {extracted_code[:200]}")
+
+                # Store the code
+                if self.store_extracted_code(extracted_code):
+                    self.logln(f"[code] ✅ Code stored successfully")
+                else:
+                    self.logln(f"[code] ❌ Failed to store code")
+
+                # Show special message in LaTeX window
+                code_preview = "🖥️ **CODE GENERATED** 🖥️\n\n"
+                code_preview += "The AI has written Python code for you!\n\n"
+                code_preview += f"```python\n{extracted_code[:300]}{'...' if len(extracted_code) > 300 else ''}\n```\n\n"
+                code_preview += "Click '💻 Run Code ✓' button to execute it."
+                self.preview_latex(code_preview, context="text")
+            else:
+                # No code found, show regular reply
+                self.logln(f"[code] ❌ FAILED: extract_python_code() returned None")
+                self.logln(
+                    f"[code] DEBUG: Checking if reply contains 'python' or '```': {'python' in reply.lower()}, {'```' in reply}")
+                self.preview_latex(reply, context="text")
+
+            # Auto-run if enabled (will use the already-stored code)
+            if self.auto_run_var.get():
+                self.logln(f"[code] DEBUG: Auto-run is ON, calling _extract_and_auto_run_from_ai")
+                self._extract_and_auto_run_from_ai(reply)
+            else:
+                self.logln(f"[code] DEBUG: Auto-run is OFF, skipping auto-run")
 
             # Rest of your TTS code...
             clean = clean_for_tts(reply, speak_math=self.speak_math_var.get())
+
+            # Debug: Log TTS text
+            self.logln(f"[tts] DEBUG: TTS text (first 200 chars): {clean[:200]}")
 
             with self._play_lock:
                 self._play_token += 1
@@ -2147,16 +2187,21 @@ class App:
                             play_path, _ = self.echo_engine.process_file(self.cfg["out_wav"], "out/last_reply_echo.wav")
                         except Exception as e:
                             self.logln(f"[echo] processing failed: {e}")
+                    self.logln(f"[audio] DEBUG: Playing audio from {play_path}")
                     self.play_wav_with_interrupt(play_path, token=my_token)
+                else:
+                    self.logln(f"[tts] ERROR: Failed to synthesize to WAV")
             finally:
                 self.speaking_flag = False
                 self.interrupt_flag = False
                 self.set_light("idle")
+                self.logln(f"[code] DEBUG: handle_text_query completed")
 
         except Exception as e:
             self.logln(f"[model] error: {e}")
+            import traceback
+            self.logln(f"[model] traceback: {traceback.format_exc()}")
             self.set_light("idle")
-
             # end query
 
     def mute_text_ai(self):
@@ -2814,7 +2859,6 @@ class App:
                 # sleep_mode removed here - so sleep doesn't pause VAD!
             )
 
-
         it = listener.listen(echo_guard=echo_guard, pause_check=pause_check)
         self._mode_last = self.duplex_mode.get()
         self.logln(f"[mode] start as {self._mode_last}")
@@ -2949,7 +2993,6 @@ class App:
                 else:
                     self._barge_latched = False
 
-
             # === SIMPLIFIED VISION LOGIC ===
             # Unified AI handles everything
             try:
@@ -2967,15 +3010,75 @@ class App:
                 continue
 
             self.logln(f"[qwen] {reply}")
-            # PREVIEW THE RESPONSE FOR VOICE QUERIES
-            self.preview_latex(reply, context="text")
+
+            # === CODE DETECTION FOR VOICE QUERIES (SAME AS handle_text_query) ===
+            code_detected = False
+            extracted_code = None
+
+            # Look for ```python ... ```
+            if '```python' in reply:
+                start = reply.find('```python')
+                end = reply.find('```', start + 8)  # 8 = len('```python')
+
+                if end > start:
+                    code_start = reply.find('\n', start) + 1
+                    if code_start > 0 and end > code_start:
+                        extracted_code = reply[code_start:end].strip()
+                        code_detected = True
+                        self.logln(f"[code][voice] Found Python code block ({len(extracted_code)} chars)")
+
+            # If not found, try generic ``` ... ```
+            if not code_detected and '```' in reply:
+                start = reply.find('```')
+                end = reply.find('```', start + 3)  # 3 = len('```')
+
+                if end > start:
+                    code_start = reply.find('\n', start) + 1
+                    if code_start > 0 and end > code_start:
+                        potential_code = reply[code_start:end].strip()
+                        # Check if it looks like Python
+                        if any(keyword in potential_code.lower() for keyword in
+                               ['import ', 'def ', 'class ', 'print(', 'math.', 'plt.', 'numpy', 'matplotlib']):
+                            extracted_code = potential_code
+                            code_detected = True
+                            self.logln(f"[code][voice] Found generic code block ({len(extracted_code)} chars)")
+
+            if code_detected and extracted_code:
+                # Store the code
+                self._last_extracted_code = extracted_code
+                self.logln(f"[code][voice] ✅ Stored {len(extracted_code)} chars of Python code")
+
+                # Update the Run Code button
+                if hasattr(self, 'code_btn'):
+                    self.code_btn.config(text="💻 Run Code ✓", style='Success.TButton')
+
+                # Show special message
+                code_preview = "🖥️ **CODE GENERATED** 🖥️\n\n"
+                code_preview += "The AI has written Python code for you!\n\n"
+                code_preview += f"```python\n{extracted_code[:300]}{'...' if len(extracted_code) > 300 else ''}\n```\n\n"
+                code_preview += "Click '💻 Run Code ✓' button to execute it."
+                self.preview_latex(code_preview, context="text")
+
+                # Play notification
+                self.play_chime(freq=880, ms=100, vol=0.1)
+            else:
+                # No code found, show regular reply
+                self.logln("[code][voice] No Python code detected in reply")
+                self.preview_latex(reply, context="text")
 
             clean = clean_for_tts(reply, speak_math=self.speak_math_var.get())
             self.speaking_flag = True
 
-            # Auto-extract and run code for voice queries
-            if self.auto_run_var.get():
-                self._extract_and_auto_run_from_ai(reply)
+            # Auto-run if enabled (will use the already-stored code)
+            if self.auto_run_var.get() and hasattr(self, '_last_extracted_code') and self._last_extracted_code:
+                self.logln("[code][voice] Auto-run enabled, will open code window after speaking...")
+
+                # Schedule to open after TTS finishes
+                def open_code_window_after_speech():
+                    if self.auto_run_var.get() and hasattr(self, '_last_extracted_code') and self._last_extracted_code:
+                        self._show_code_window()
+
+                self.master.after(100, open_code_window_after_speech)
 
             self.interrupt_flag = False
             self.set_light("speaking")
@@ -3842,7 +3945,14 @@ class App:
         if hasattr(self, '_last_extracted_code') and self._last_extracted_code:
             self.code_window.set_code(self._last_extracted_code)
             self.logln("[code] Auto-loaded extracted code into sandbox")
+
+            # Clear the stored code after loading (so button resets)
             self._last_extracted_code = None
+
+            # Update button to remove checkmark
+            if hasattr(self, 'code_btn'):
+                self.code_btn.config(text="💻 Run Code", style='TButton')
+                self.logln("[code] Reset 'Run Code' button (checkmark removed)")
 
             # === AUTO-RUN if checkbox is checked ===
             if self.auto_run_var.get():
@@ -3854,9 +3964,12 @@ class App:
                 "# No code extracted yet.\n# Ask AI to generate code, or paste your own code here.")
             self.logln("[code] No code to auto-load")
 
-        # Reset button appearance
-        self.code_btn.config(text="💻 Run Code", style='TButton')
+            # Ensure button doesn't have checkmark
+            if hasattr(self, 'code_btn'):
+                self.code_btn.config(text="💻 Run Code", style='TButton')
+
         self.logln("[code] Code window opened")
+
 
 
     def _on_auto_run_toggle(self):
@@ -4204,19 +4317,24 @@ class App:
             self.logln(f"[code] Error receiving output: {e}")
 
     def _extract_and_auto_run_from_ai(self, ai_response: str):
-        """Extract code from AI response and auto-run if enabled"""
+        """Auto-run extracted code if enabled (assumes code already extracted)"""
         if not self.auto_run_var.get():
             return False
 
-        code = self.extract_python_code(ai_response)
-        if code:
-            self.store_extracted_code(code)
-
-            # Check if we should auto-open the window
-            if self.auto_run_var.get():
-                # Auto-open the code window
-                self._show_code_window()  # This will trigger auto-run
-                self.logln("[code] ✅ Auto-opened and running code from AI response")
+        # Check if we have stored code (already extracted in handle_text_query)
+        if hasattr(self, '_last_extracted_code') and self._last_extracted_code:
+            # Auto-open the code window
+            self._show_code_window()  # This will trigger auto-run
+            self.logln("[code] ✅ Auto-running extracted code")
+            return True
+        else:
+            # Fallback: try to extract if somehow not already done
+            self.logln("[code] ⚠️ No stored code found, attempting extraction...")
+            code = self.extract_python_code(ai_response)
+            if code:
+                self.store_extracted_code(code)
+                self._show_code_window()
+                self.logln("[code] ✅ Extracted and auto-running code")
                 return True
 
         return False
@@ -5540,91 +5658,91 @@ Do NOT reference or blend with any previous personalities.
             self.personality_status.config(text="❌ Error", foreground="red")
 
     def extract_python_code(self, text: str):
-        """Extract Python code - Filter out output text and pip install"""
+        """Extract Python code - SIMPLIFIED VERSION"""
         import re
 
-        pattern = r'```(?:python)?\s*(.*?)\s*```'
-        matches = re.findall(pattern, text, re.DOTALL)
+        # DEBUG: Log what we're trying to extract
+        self.logln(f"[code] DEBUG: Extracting code from {len(text)} chars")
+        self.logln(f"[code] DEBUG: First 200 chars: {text[:200]}")
+
+        # Simple pattern for Python code blocks
+        pattern = r'```python\s*(.*?)\s*```'
+        matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
 
         if not matches:
-            return None
+            # Try alternative patterns
+            pattern2 = r'```\s*(.*?)\s*```'
+            matches2 = re.findall(pattern2, text, re.DOTALL)
 
-        clean_blocks = []
-        for block in matches:
-            lines = block.split('\n')
-            python_lines = []
+            # Filter for Python-looking code
+            python_matches = []
+            for match in matches2:
+                # Check if it looks like Python (has import, def, class, etc.)
+                if any(keyword in match.lower() for keyword in
+                       ['import ', 'def ', 'class ', 'print(', 'numpy', 'matplotlib', 'plt.']):
+                    python_matches.append(match)
+
+            matches = python_matches
+
+        if not matches:
+            self.logln("[code] DEBUG: No code blocks found with standard patterns")
+
+            # Last resort: Look for code-like sections
+            lines = text.split('\n')
+            code_lines = []
+            in_code = False
 
             for line in lines:
                 stripped = line.strip()
-
-                # === FILTER OUT OUTPUT/RESULT TEXT ===
-                # Lines that start with text (not code) followed by colon and number
-                if (re.match(r'^[a-zA-Z].*decimal places:', stripped) or  # "to 100 decimal places:"
-                        re.match(r'^[a-zA-Z].*places:', stripped) or  # "π to 100 places:"
-                        re.match(r'^[a-zA-Z].*result:', stripped) or  # "The result is:"
-                        re.match(r'^[a-zA-Z].*output:', stripped) or  # "The output:"
-                        'π to' in stripped or  # "π to 100 decimal places"
-                        'Pi to' in stripped):  # "Pi to 100 decimal places"
-                    continue  # Skip output text
-
-                # === CRITICAL: REMOVE pip install commands ===
-                if (stripped.startswith('pip install') or
-                        stripped.startswith('pip3 install') or
-                        stripped.startswith('!pip install') or
-                        stripped.startswith('conda install') or
-                        'pip install mpmath' in stripped):
-                    continue
-
-                # Also remove comments about pip installation
-                if stripped.startswith('#') and 'pip install' in stripped.lower():
-                    continue
-
-                # KEEP: Valid Python code
-                if (not stripped or
-                        stripped.startswith('#') or
+                if (stripped.startswith('import ') or
+                        stripped.startswith('from ') or
                         stripped.startswith('def ') or
                         stripped.startswith('class ') or
-                        stripped.startswith('import ') or
-                        stripped.startswith('from ') or
-                        '=' in line or
-                        '(' in stripped or
-                        stripped.endswith(':') or
-                        stripped.startswith('return ') or
-                        stripped.startswith('print(') or
-                        stripped.startswith('for ') or
-                        stripped.startswith('if ') or
-                        stripped.startswith('while ') or
-                        stripped.startswith('try:') or
-                        stripped.startswith('except ') or
-                        stripped.startswith('raise ') or
-                        re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*\s*[:=\(]', stripped)):
-                    python_lines.append(line)
+                        stripped.startswith('# ') and len(stripped) > 10):
+                    in_code = True
 
-                # REMOVE: Output lines with results
-                elif (re.match(r'^[A-Z][a-z].*: [-+]?[\d\.]+', stripped) or
-                      re.match(r'^[A-Z][a-z].* is [-+]?[\d\.]+', stripped) or
-                      'approximate square root' in stripped or
-                      'Error check:' in stripped or
-                      'The output will be:' in stripped):
+                if in_code:
+                    code_lines.append(line)
+
+                    # Stop if we hit a non-code line after some code
+                    if (len(code_lines) > 5 and
+                            not stripped and
+                            not any(keyword in line for keyword in ['import', 'def', 'class', '=', '(', ')'])):
+                        break
+
+            if code_lines:
+                code = '\n'.join(code_lines).strip()
+                if len(code) > 20:  # Reasonable minimum
+                    self.logln(f"[code] DEBUG: Found {len(code)} chars via line-by-line detection")
+                    return code
+
+        if matches:
+            # Return the largest code block
+            largest_block = max(matches, key=len)
+            self.logln(f"[code] DEBUG: Found {len(matches)} code block(s), largest is {len(largest_block)} chars")
+
+            # Minimal cleaning - just remove obvious non-code lines at start/end
+            lines = largest_block.split('\n')
+            cleaned_lines = []
+
+            for line in lines:
+                stripped = line.strip()
+                # Skip lines that are clearly not Python code
+                if (stripped.startswith('Here is') or
+                        stripped.startswith('The code') or
+                        stripped.startswith('Output:') or
+                        stripped.startswith('Result:') or
+                        'will display' in stripped.lower() or
+                        'will show' in stripped.lower()):
                     continue
+                cleaned_lines.append(line)
 
-                # REMOVE: Standalone numbers (results)
-                elif re.match(r'^[-+]?[\d\.]+(?:e[-+]?\d+)?$', stripped):
-                    continue
+            result = '\n'.join(cleaned_lines).strip()
+            self.logln(f"[code] DEBUG: Cleaned to {len(result)} chars")
+            return result
 
-                # Default: Keep the line
-                else:
-                    python_lines.append(line)
-
-            if python_lines:
-                clean_blocks.append('\n'.join(python_lines))
-
-        if not clean_blocks:
-            return None
-
-        return "\n\n".join(clean_blocks).strip()
-
-
+        self.logln("[code] DEBUG: No Python code found")
+        return None
 
 
 
@@ -5632,16 +5750,25 @@ Do NOT reference or blend with any previous personalities.
         """Store extracted code and update UI"""
         if code and len(code) > 10:  # Only store substantial code
             self._last_extracted_code = code
-            self.logln(f"[code] Stored {len(code)} chars of Python code")
+            self.logln(f"[code] ✅ Stored {len(code)} chars of Python code")
 
-            # Update the Run Code button to show we have code
-            self.code_btn.config(text="💻 Run Code ✓", style='Success.TButton')
+            # Update the Run Code button to show we have code (with checkmark)
+            if hasattr(self, 'code_btn'):
+                self.code_btn.config(text="💻 Run Code ✓", style='Success.TButton')
+                self.logln("[code] Updated 'Run Code' button with checkmark")
 
-            # Optional: Play a subtle notification sound
+            # Also update auto-run checkbox text
+            if hasattr(self, 'auto_run_check'):
+                current_text = self.auto_run_check.cget("text")
+                if "✓" not in current_text:
+                    self.auto_run_check.config(text=current_text + " ✓")
+
+            # Play a subtle notification sound
             self.play_chime(freq=880, ms=100, vol=0.1)
             return True
-        return False
 
+        self.logln("[code] ⚠️ Code too short or empty, not storing")
+        return False
 
 
     def _clear_chat_context_for_personality_switch(self):
