@@ -312,9 +312,9 @@ plt.show = _patched_show
 
             try:
                 # Use much longer timeout for plotting (user interaction), or no timeout
-                # For plots: 300 seconds (5 min) to allow interaction
-                # For non-plots: 30 seconds
-                timeout = 300 if has_plotting else 30
+                # For plots: 900 seconds to allow interaction (15 mins)
+                # For non-plots: 300 seconds or 5 mins
+                timeout = 900 if has_plotting else 300
 
                 # Execute
                 result = subprocess.run(
@@ -408,9 +408,9 @@ plt.show = _patched_show
         self.status_var.set(message)
 
     def _show_execution_results(self, result, plot_path=None):
-        """Display execution results and optionally send to AI"""
         output = ""
         has_meaningful_output = False
+        has_stderr = False
 
         if result.stdout:
             stdout_clean = result.stdout.encode('ascii', 'ignore').decode('ascii').strip()
@@ -427,30 +427,52 @@ plt.show = _patched_show
                 output += "\n=== STDERR ===\n"
                 output += stderr_clean
                 has_meaningful_output = True
+                has_stderr = True  # ← NEW: Any stderr means something went wrong
 
         # Store last output for manual sending
         self._last_output = output.strip() if has_meaningful_output else ""
-        self._last_had_error = (result.returncode != 0)
 
-        if result.returncode != 0:
+        # Detect errors intelligently
+        output_lower = output.lower()
+        error_patterns = [
+            'traceback',
+            'error',  # ← Changed from 'error:' to just 'error'
+            'exception',
+            'failed',
+            'failure',
+            'warning',
+            'cannot',
+            'could not',
+            'unable to',
+            'not found',
+            'no file',
+            'does not exist',
+            'invalid',
+            'missing',
+        ]
+
+        # Error if: non-zero exit, stderr exists, or error patterns found
+        has_error = (result.returncode != 0) or has_stderr or any(pattern in output_lower for pattern in error_patterns)
+        self._last_had_error = has_error
+
+        if has_error:
             self._show_output(output, is_error=True)
-            self.status_var.set(f"Failed (exit code: {result.returncode})")
+            self.status_var.set(f"Failed (detected error)")
         else:
             self._show_output(output, is_error=False)
             self.status_var.set("Success")
 
-        # Check if plot was saved and enable buttons
+        # Check if plot was saved
         if plot_path and os.path.exists(plot_path):
             self.last_plot_path = plot_path
             self.save_plot_btn.config(state=tk.NORMAL)
             self.open_plot_btn.config(state=tk.NORMAL)
             self.status_var.set("Success - Plot saved!")
-        else:
-            self.last_plot_path = None
 
-        # Auto-send to AI if enabled and there's meaningful output
-        if has_meaningful_output and self.auto_send_var.get():
+        # **SMART AUTO-SEND: Send only errors**
+        if has_meaningful_output and self.auto_send_var.get() and has_error:
             self._send_output_to_ai()
+
 
     def _send_output_to_ai(self):
         """Send the last output to the main app's text box and optionally auto-send"""
